@@ -44,12 +44,12 @@ try:
 
     ### Vessel Parameters ###
     # Setup run parameters for each reaction module. Each module should have parameters at the same index in each list.
-    experimentName = ['20220531_Gynemesh-Upsylon-Polyform-H2O2-100mM- week2']
-    experimentEndDates = ["04/08/2023 16:57"]   # "DD/MM/YYYY hh:mm"
+    experimentName = ['20231228-aging_aRAA6_70C_1000uA_Pt6_conc-125mM_threhold-135mM_no poly']
+    experimentEndDates = ["04/08/2025 16:57"]   # "DD/MM/YYYY hh:mm"
     ### Error with date format. may be MM/DD/YYYY hh:mm
-    experimentRunParameters = [[100, 85]]                  # TARGET [H2O2], TEMP(C)
+    experimentRunParameters = [[145, 85]]                  # TARGET [H2O2], TEMP(C)
     average_value = 20
-    experimentCurrToConcFunctions = [lambda x: (x + 84.148)/2.1673]
+    experimentCurrToConcFunctions = [lambda x: (x - 12.292)/0.1999]
     echemRunParameters = [{"curr_range": '1000uA',
                            "volt_range": '1V',
                            "low_volt": -0.3,
@@ -143,7 +143,7 @@ try:
 ##                print p
                 dev = Potentiostat(p[0])
                 cT = dev.get_device_id()
-                if float(cT) == 1:
+                if float(cT) == 0:
                     print 'Connecting RAA 1 to Arduino (ID: %s) via port %s.'%(str(cT), p[0])
                     _Ard_Address[0] = dev
                 if float(cT) == 2:
