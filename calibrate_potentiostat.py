@@ -1,78 +1,79 @@
+# Import necessary modules
 from potentiostat import Potentiostat
 import time
 import serial
 import serial.tools.list_ports
 import traceback
 
+# Define experiment parameters
 potentiostat_ID = 0
-curr_range = '1000uA' # Name of current range for test [-10uA, +10uA]
+curr_range = '1000uA'
 volt_range = '1V'
 low_voltage = -0.3
 low_time = 0.5
 high_voltage = 0.7
 high_time = 2
-sample_period = .1
+sample_period = 0.1
 
-filename = '20231228-calibration-aRAA6-70C_120rpm_1000uA_V07_Pt6-600mM.txt'
+# Define output file for results
+filename = 'Add File Name here.txt'  # Adjusted filename
 
-try: 
-	
+try:
+    # Initialize potentiostat device
     dev = None
     ports = list(serial.tools.list_ports.comports())
     for p in ports:
-        print 'Checking port %s'%(str(p))
+        print 'Checking port %s' % (str(p))
         try:
             dev_temp = Potentiostat(p[0])
             cT = dev_temp.get_device_id()
             if cT == potentiostat_ID:
                 dev = dev_temp
-            print 'Binded...'
+            print 'Connected...'
         except:
             print 'Skipping...'
             pass
 
     if dev:
-        print 'Running chronoamperometry on potentiostat with device ID: %s'%(str(dev.get_device_id()))
+        # Configure potentiostat for chronoamperometry
+        print 'Running chronoamperometry on potentiostat with device ID: %s' % (str(dev.get_device_id()))
         dev.set_all_elect_connected(True)
         dev.set_volt_range(volt_range)
         dev.set_curr_range(curr_range)
-        #dev.stop_test()
 
+        # Define variables for data collection
         list_length = 5
         curr_list = None
+
         while True:
             stTime = time.time()
             run_pot = True
             hold_period = False
-##            sample_period = .1
             sample_time = time.time()
             num_samples = 0
             total_curr = 0
 
-            # cycle for low_time + high_time
-#           print "Holding Low"
+            # Cycle for low_time + high_time
             dev.set_volt(low_voltage)
             while run_pot:
                 if time.time() - stTime > low_time:
-                    # start holoding high voltage
+                    # Start holding high voltage
                     if not hold_period:
-#                        print "Holding High"
                         dev.set_volt(high_voltage)
                         hold_period = True
 
-                    # sample every sample_period seconds
+                    # Sample every sample_period seconds
                     if time.time() - stTime > low_time + (high_time/2):
                         if time.time() - sample_time > sample_period:
-#                            print dev.get_curr()
                             total_curr += dev.get_curr()
                             num_samples += 1
                             sample_time = time.time()
-                
-                # exit cycle
+
+                # Exit cycle
                 if time.time() - stTime > low_time + high_time:
                     run_pot = False
 
-            # keep moving average of sampled currents
+            # Calculate moving average of sampled currents
             if curr_list is None:
                 curr_list = [total_curr/num_samples]
             elif len(curr_list) < list_length:
@@ -80,16 +81,18 @@ try:
             else:
                 curr_list = curr_list[1:len(curr_list)] + [total_curr/num_samples]
             curr = sum(curr_list)/len(curr_list)
-            # write to the file
+
+            # Write current value to the file
             with open(filename, 'a') as fp:
-				fp.write("%f\n"%curr)
-            print "%f"%(curr)
+                fp.write("%f\n" % curr)
+            print "%f" % (curr)
     else:
-        print 'Could not connect potentiostat with device ID: %s'%(str(potentiostat_ID))
-except:
+        print 'Could not connect potentiostat with device ID: %s' % (str(potentiostat_ID))
+except Exception as e:
+    # Print traceback if an exception occurs
     traceback.print_exc()
-    pass
 finally:
+    # Ensure that the test is stopped on all available ports
     ports = list(serial.tools.list_ports.comports())
     for p in ports:
         try:
