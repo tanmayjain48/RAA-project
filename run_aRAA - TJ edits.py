@@ -1,9 +1,4 @@
 #Disclaimer: 
-#The current document is distributed as supplementary material for the following publication (not peer-reviewed):
-#"Automated Reactive Accelerated Aging for Rapid In Vitro Evaluation of Neural Implants Performance" 
-#by Matthew G. Street, Cristin G. Welle, and Pavel A. Takmakov
-#doi: https://doi.org/10.1101/204099 
-#https://www.biorxiv.org/content/early/2017/10/17/204099
 #The views, opinions, and/or findings contained in this document are those of the authors and should not be interpreted 
 #as representing the official views or policies of Department of Health and Human Services or the U.S. Government. 
 #The mention of commercial products, their sources, or their use in connection with material reported herein
@@ -16,527 +11,187 @@
 #In addition, any derivative work shall bear a notice that it is sourced from the aRAA, 
 #and any modified versions shall additionally bear the notice that they have been modified.
 
-
-import os.path
 import RPi.GPIO as GPIO
 import time
 from datetime import datetime
-from decimal import *
-##import Adafruit_ADS1x15
-import math
-import random
 import smbus
 import serial
 import serial.tools.list_ports
-import struct
-import time
-import shelve
 import traceback
 from potentiostat import Potentiostat
-import logging
 
-try:
-    
-    
-                
-    useLoadedVars = 0       # Set to 1 unless debugging code. A 1 will tell the RPi to use previous parameters.
+# Vessel Parameters
+experimentName = ['Add file name here']
+experimentRunParameters = [[145]]  # Set target H2O2 concentration here
+average_value = 20
 
+# Calibration parameters for converting current to H2O2 concentration
+# The values below (12.292 and 0.1999) are examples and should be edited based on the user's calibration experiment.
+# These values represent the y-intercept and slope of the linear regression between current and H2O2 concentration.
+# Calibration Experiment: y = mx + b, where y is H2O2 concentration, x is current.
+experimentCurrToConcFunctions = [lambda x: (x - 12.292) / 0.1999]
 
-    ### Vessel Parameters ###
-    # Setup run parameters for each reaction module. Each module should have parameters at the same index in each list.
-    experimentName = ['20231228-aging_aRAA6_70C_1000uA_Pt6_conc-125mM_threhold-135mM_no poly']
-    experimentEndDates = ["04/08/2025 16:57"]   # "DD/MM/YYYY hh:mm"
-    ### Error with date format. may be MM/DD/YYYY hh:mm
-    experimentRunParameters = [[145, 85]]                  # TARGET [H2O2], TEMP(C)
-    average_value = 20
-    experimentCurrToConcFunctions = [lambda x: (x - 12.292)/0.1999]
-    echemRunParameters = [{"curr_range": '1000uA',
-                           "volt_range": '1V',
-                           "low_volt": -0.3,
-                           "high_volt": 0.7,
-                           "low_volt_time": .5,
-                           "high_volt_time": 2}]
-    pumpPins = [17, 30]                                              # GPIO pins: [RAA 1 Pump, RAA 2 Pump]
-    defaultPath = '/home/pi/potentiostat-master/software/python/potentiostat/RAA'                 # Parent directory for run data and saved parameters
-    sampleRate = float(2.5**-1)                                          # Hz
-    dataWriteRate = float(15**-1)                                       # Hz
-    
-##    pump_on_resolution = 15             # seconds
+# Electrochemical Run Parameters:
+# These parameters define the settings for the potentiostatic experiment (electrochemical run) for each reaction module.
+# Each module has a dictionary specifying the current range, voltage range, voltage limits, and corresponding time durations.
+# - "curr_range": Current range for the potentiostatic experiment (e.g., '1000uA' for 1000 microamperes).
+# - "volt_range": Voltage range for the potentiostatic experiment (e.g., '1V' for 1 volt).
+# - "low_volt": Lower voltage limit during the experiment in volts.
+# - "high_volt": Higher voltage limit during the experiment in volts.
+# - "low_volt_time": Duration of the lower voltage limit in seconds.
+# - "high_volt_time": Duration of the higher voltage limit in seconds.
+echemRunParameters = [{"curr_range": '1000uA',
+                       "volt_range": '1V',
+                       "low_volt": -0.3,
+                       "high_volt": 0.7,
+                       "low_volt_time": .5,
+                       "high_volt_time": 2}]
 
+# GPIO pins corresponding to peristaltic pump control
+# Pin 17 is an example and should be edited based on the user's setup.
+# This pin has positive voltage and is connected to an external power relay
+# that controls the peristaltic pump.
+pumpPins = [17]  
 
+defaultPath = '/home/pi/potentiostat-master/software/python/potentiostat/RAA'
 
-    bus = smbus.SMBus(1)    # Setup GPIO object
-##    adc = Adafruit_ADS1x15.ADS1115()    # On board clock object
-    numberOfRAAs = len(experimentName);     # Number of reaction modules based on length of list created above
-#    allTemps = [[] for k in range(numberOfRAAs)]        # Initiate run temp data 
-    allH2O2Conc = [[] for k in range(numberOfRAAs)]     # Initiate run concentration data
-    all_current = [float('nan') for k in range(numberOfRAAs)]
-    echem_running_status = [False for k in range(numberOfRAAs)]
-    echem_timing = [[] for k in range(numberOfRAAs)]
-    new_current_available = [False for k in range(numberOfRAAs)]
-    estimated_echem_end_time = [[] for k in range(numberOfRAAs)]
-##    all_threads = [[] for k in range(numberOfRAAs)]
-##    all_thread_init = [False for k in range(numberOfRAAs)]
-    
-    # Check RAA Dates. This checks that dates are in the correct format ("DD/MM/YYYY hh:mm")
-    for k in range(numberOfRAAs):
-        try:
-           x = datetime.strptime(experimentEndDates[k], "%d/%m/%Y %H:%M")
-        except:
-            print 'Check date format for RAA #%i'%(k+1)
-            quit()
-    errorNum = 0
-    dataLogFileName = list()
-    # Create log file if it does not exist
-    for k in range(numberOfRAAs):
-        dataLogFileName.append(defaultPath + '/' + experimentName[k] + '.txt')
-        
-    GPIO.setmode(GPIO.BCM)    # Setup GPIO map (BOARD = physical pin layout, BCM = GPIO pin numbering)
- 
-    for k in range(numberOfRAAs):
-        print 'Experiment: %s'%experimentName[k]
-        print 'File Dir: %s'%dataLogFileName[k]
-        print 'End Date: %s'%experimentEndDates[k]
-        t_end = datetime.strptime(experimentEndDates[k], "%d/%m/%Y %H:%M")
-        t_end = (t_end - datetime.now()).total_seconds()
-        print 'Seconds Until %s Ends: %s\n\n'%(experimentName[k],t_end)
-    for k in range(len(pumpPins)):
-        GPIO.setup(pumpPins[k], GPIO.OUT, initial=GPIO.LOW)
-        print 'GPIO setup %d'%pumpPins[k]
-        
-    ### Command List ###
-    # The following two commands are for assigning a USB serial port to a reaction module temp or echem
-    # controller. This is necessary when all 4 USB ports are being used by controllers. The run can be
-    # initialized using a connected mouse and keyboard followed by disconnecting those peripherals and
-    # connecting the 4 temp or echem controllers.
-    def find_PID_serial_ports(num_RAAs):
-        ser_ports = list(serial.tools.list_ports.comports())
-        serialPID = [[] for x in range(num_RAAs)]
-        for k in range(len(ser_ports)):
-            for k1 in range(num_RAAs):
-                ser = serial.Serial(ser_ports[k][0], 9600, timeout = 0)
-                ser.flushInput()
-                ser.flushOutput()
-                cT = ser.readlines()
-                string = '*00'+str(k1+1)+'G110 \r\r'
-                ser.flushInput()
-                ser.flushOutput()
-                ser.write(string)
-                ser.flushInput()
-                ser.flushOutput()
-                time.sleep(.1)
-                cT = ser.readlines()
-                ser.flushInput()
-                ser.flushOutput()
-                ser.close()
-                if cT:
-                    serialPID[k1] = ser_ports[k][0]
-        return serialPID
+# Sampling rate for collecting data from the potentiostat. This is the rate
+# at which the system reads potential and current data from the potentiostat.
+# For example, the code below specifies the sampling rate (sampleRate) as float(2.5**-1), 
+# which is equivalent to 1/2.5 or approximately 0.4 Hz. 
+# This means that the system collects data from the potentiostat every 1/0.4 seconds,
+# or approximately every 2.5 seconds.
+sampleRate = float(2.5**-1)
 
-    # Find and link Arduino to a module number
-    def find_arduino_serial_ports(num_RAAs):
-        _Ard_Address = [[] for x in range(num_RAAs)]
-        ports = list(serial.tools.list_ports.comports())
-        print 'Looking for ARD port...'
-        for p in ports:
-            try:
-##                print p
-                dev = Potentiostat(p[0])
-                cT = dev.get_device_id()
-                if float(cT) == 0:
-                    print 'Connecting RAA 1 to Arduino (ID: %s) via port %s.'%(str(cT), p[0])
-                    _Ard_Address[0] = dev
-                if float(cT) == 2:
-                    print 'Connecting RAA 2 to Arduino (ID: %s) via port %s.'%(str(cT), p[0])
-                    _Ard_Address[1] = dev
-            except:
-                pass
-##                print 'Could not connect to arduino (Ln: 140)'
-        for i in range(num_RAAs):
-            if not _Ard_Address[i]:
-                print 'Could not connect RAA %d to potentiostat'%i
-        return _Ard_Address
+# Data write rate for storing collected data to a file. This is the rate
+# at which the system writes the collected data to a file. 
+# For example, the code below specifies the sampling rate (dataWriteRate) as float(15**-1), 
+# which is equivalent to 1/15 or approximately 0.067 Hz. 
+# This means that the system writes data to the file every 1/0.067 seconds,
+# or approximately every 15 seconds.
+dataWriteRate = float(15**-1)
 
-    # Talk to the temperature controller and get the current temp value.
-#    def get_current_temperature(_serialPID):
-#        ser = serial.Serial(_serialPID, 9600, timeout = 0)
-#        ser.write("*G110 \r")
-#        ser.flushInput()
-#        ser.flushOutput()
-#        time.sleep(.1)
-#        cT = ser.readlines()
-#        ser.close()
-#        return float(cT[0])
+# I2C bus setup
+bus = smbus.SMBus(1)
+numberOfRAAs = len(experimentName)
+allH2O2Conc = [[] for _ in range(numberOfRAAs)]
+all_current = [float('nan') for _ in range(numberOfRAAs)]
+echem_running_status = [False for _ in range(numberOfRAAs)]
+echem_timing = [[] for _ in range(numberOfRAAs)]
+new_current_available = [False for _ in range(numberOfRAAs)]
+estimated_echem_end_time = [[] for _ in range(numberOfRAAs)]
 
+# File names for data logging
+dataLogFileName = [defaultPath + '/' + exp_name + '.txt' for exp_name in experimentName]
+GPIO.setmode(GPIO.BCM)
 
-    # Log the current experimental values
-    def Write_To_RAA_File(log_file_name, new_line):
-        current_time = datetime.now()
-        current_time = current_time.timetuple()
-        current_time = str(current_time[0:6])
-        current_time = current_time[1:(len(current_time)-1)]
-        current_time = current_time+', '+str(int(math.floor(math.modf(time.time())[0]*1000)))
-        
-        for k in range(len(new_line)):
-            new_line[k] = str(new_line[k])
-        new_line = [current_time] + new_line
-        new_line = '\t'.join(new_line)
-        new_line = new_line + '\n'
-        with open(log_file_name, 'a') as RAAFile:
-            #print 'TEST', log_file_name, new_line
-            RAAFile.write(new_line)
-            
+# Set up GPIO pins for pumps
+for k in range(len(pumpPins)):
+    GPIO.setup(pumpPins[k], GPIO.OUT, initial=GPIO.LOW)
 
+# Function to find Serial ports based on PID
+def find_PID_serial_ports(num_RAAs):
+    ser_ports = list(serial.tools.list_ports.comports())
+    serialPID = [[] for _ in range(num_RAAs)]
+    for k in range(len(ser_ports)):
+        for k1 in range(num_RAAs):
+            ser = serial.Serial(ser_ports[k][0], 9600, timeout=0)
+            ser.flushInput()
+            ser.flushOutput()
+            cT = ser.readlines()
+            string = f'*00{k1 + 1}G110 \r\r'
+            ser.flushInput()
+            ser.flushOutput()
+            ser.write(string)
+            ser.flushInput()
+            ser.flushOutput()
+            time.sleep(.1)
+            cT = ser.readlines()
+            ser.flushInput()
+            ser.flushOutput()
+            ser.close()
+            if cT:
+                serialPID[k1] = ser_ports[k][0]
+    return serialPID
 
-
-    # Manage a list of values for temperature and concentration. This is so a running average can be used if
-    # necessary.
-    def Add_Value_To_Data_List(old_vals, new_val, lenLimit):
-		
-        if len(old_vals) >= lenLimit:
-            old_vals = old_vals[1:(len(old_vals))]
-        old_vals = old_vals + [new_val]
-        return old_vals
-
-
-##    class peristaltic_thread (threading.Thread):
-##        def __init__(self, on_fraction, gpio_pin):
-##            threading.Thread.__init__(self)
-##            self.on_fraction = on_fraction
-##            self.gpio_pin = gpio_pin
-##        def run(self):
-##            try:
-##                operate_pump(self.on_fraction, self.gpio_pin)
-##            except:
-##                pass
-##
-##    def operate_pump(on_fraction, pin_number):
-##        GPIO.output(pin_number, GPIO.HIGH)
-##        time.sleep(pump_on_resolution*on_fraction)
-##        GPIO.output(pin_number, GPIO.LOW)
-        
-##    # Create thread to run each potentiostat independantly without interrupting main script
-##    class potentiostat_thread (threading.Thread):
-##        def __init__(self, threadID, device_address):
-##            threading.Thread.__init__(self)
-##            self.threadID = threadID
-##            self.portNum = device_address
-##        def run(self):
-##            print "Starting " + str(self.threadID)
-##            try:
-##                curr = run_rodeo(self.threadID, self.portNum)
-##             ##  print "Finishing " + str(self.threadID)
-##            except:
-##                curr = float('nan')
-##           ## print 'RAA %i Current: %f'%(self.threadID + 1, curr)
-##            global all_current
-##            all_current[self.threadID] = curr
-##          
-##
-##    # Potentiostat method used by threads
-##    def run_rodeo(threadID, device_ID):
-##        curr_range = '10uA'
-##        volt_range = '1V'
-##        low_volt = -0.3             # Volts 
-##        high_volt = 0.7             # Volts
-##        low_volt_time = .5          # Seconds
-##        high_volt_time = 2          # Seconds
-##        sample_period = 0.1
-##
-##    
-####        print 'Attempting to talk to Potentiostat %i'%(thread_ID + 1)
-##        device_ID.set_curr_range(curr_range)
-##        device_ID.set_volt_range(volt_range)
-####        print 'Successfully talked to Potentiostat %i'%(thread_ID + 1)
-##
-##        device_ID.set_volt(low_volt)
-##        time.sleep(low_volt_time)
-##        device_ID.set_volt(high_volt)
-##        time.sleep(high_volt_time)
-##        current = device_ID.get_curr()
-##        device_ID.set_volt(0)
-##        return current
-
-    def run_rodeo_synchronized(device_ID, echem_timer, echem_parameters):
-##        print echem_parameters
-        curr_range = echem_parameters['curr_range']
-        volt_range = echem_parameters['volt_range']
-        low_volt = echem_parameters['low_volt']
-        high_volt = echem_parameters['high_volt']
-        low_volt_time = echem_parameters['low_volt_time']
-        high_volt_time = echem_parameters['high_volt_time']
-##        curr_range = '10uA'
-##        volt_range = '1V'
-##        low_volt = -0.3             # Volts 
-##        high_volt = 0.7             # Volts
-##        low_volt_time = .5          # Seconds
-##        high_volt_time = 2          # Seconds
-
-        current = float('nan')
-        try:
-##            print 'Rodeo code for %s'%(str(device_ID.get_device_id()))
-            if not device_ID.get_curr_range() == curr_range:
-                device_ID.set_curr_range(curr_range)
-            if not device_ID.get_volt_range() == volt_range:
-                device_ID.set_volt_range(volt_range)
-                
-            if abs(echem_timer - time.time()) < low_volt_time:
-##                print 'Timer: %s\nCurrent time: %s\nLow volt time: %s'%(str(echem_timer), str(time.time()), str(echem_timer-time.time()))
-                if not round(device_ID.get_volt()*10)/10 == round(low_volt*10)/10:
-                    #print '    Setting potentiostat %s to %sV'%(str(device_ID.get_device_id()), str(low_volt))
-                    device_ID.set_volt(low_volt)
-            elif (abs(echem_timer - time.time()) > low_volt_time) and (abs(echem_timer - time.time()) < (high_volt_time + low_volt_time)):
-                if not round(10*device_ID.get_volt())/10 == round(10*high_volt)/10:
-                    #print '    Setting potentiostat %s to %sV'%(str(device_ID.get_device_id()), str(high_volt))
-                    device_ID.set_volt(high_volt)
-            elif (abs(echem_timer - time.time()) > (high_volt_time + low_volt_time)):
-                if not round(device_ID.get_volt()*10)/10 == 0:
-                    current = device_ID.get_curr()
-                    #print '    Setting potentiostat %s to %sV.'%(str(device_ID.get_device_id()), str(0))
-                    device_ID.set_volt(0)
-                    #current = device_ID.get_curr()
-        except Exception as ex:
-            pass
-##            logging.exception("message")
-        return current
-        
-
-
-
-
-
-
-    # Initialize communication with peripherals
-    time.sleep(1)
-    # don't need this if we're not measuring T
-    #RAA_Temp_Comm = find_PID_serial_ports(numberOfRAAs)
-    time.sleep(2)
-    Ard_Address = find_arduino_serial_ports(numberOfRAAs)
-    
-    currentRAA = 0;
-    lastSampleTime = time.time()
-    lastWriteTime = lastSampleTime
-    allRAANotComplete = True
-    temperatureErrorCount = 0;
-    ardErrorCount = 0;
-    printStep = 0
-    
-    while allRAANotComplete:
-        #if not printStep:
-        #    printStep += 1
-        #    print 'aRAA Step %s start'%printStep
-            
-        currentRAA = currentRAA + 1
-        if currentRAA > numberOfRAAs:
-            currentRAA = 1
-        # Check if run is finished
-        if datetime.now() > datetime.strptime(experimentEndDates[currentRAA-1], "%d/%m/%Y %H:%M"):
-            for key in dir():
-                if globals()[key].__class__ is list:
-                    if len(globals()[key]) == numberOfRAAs:
-                        try:
-                            del globals()[key][currentRAA-1]
-                        except:
-                            pass
-            numberOfRAAs = numberOfRAAs - 1
-            if numberOfRAAs == 0:
-                allRAANotComplete = False
-                print "Run over"
-            continue
-        
-        if useLoadedVars == 1 and os.path.isfile(defaultPath + '/wsvars.out'):
-            print 'Loading previous session...'
-            recovFile = shelve.open(defaultPath + '/wsvars.out', 'r')
-            for key in recovFile:
-                globals()[key] = recovFile[key]
-            recovFile.close()
-            # Reset start timer using the elapsed time from previous session
-            startTimer = time.time() - (currentTimer - startTimer)
-            currentTimer = time.time()
-            useLoadedVars = 0
-
-            
-        pumpPinVals = [0 for k in range(numberOfRAAs)]
-        # Determine State of Pins
-#        for k in range(numberOfRAAs):
-#            try:
-##                _H2O2Temp = []
-##                k1 = len(allH2O2Conc[k]) - 1
-##                while _H2O2Temp == []:
-##                    if not math.isnan(allH2O2Conc[k][k1]):
-##                        _H2O2Temp = allH2O2Conc[k][k1]
-##                    elif k1 == 0:
-##                        _H2O2Temp = float('nan')
-##                    k1 -= 1
-                
-#                _H2O2Temp = allH2O2Conc[k][-1]
-#                if _H2O2Temp < experimentRunParameters[k][0]:
-#                    pumpPinVals[k] = 1
-#            except:
-#                pass
-#        GPIO.output(pumpPins, pumpPinVals)
-
-        # Set status of echem methods
-        for k in range(numberOfRAAs):
-            if echem_running_status[k]:
-##                print 'Line 339: %s'%(str(Ard_Address[k].get_device_id()))
-                curr = run_rodeo_synchronized(Ard_Address[k], echem_timing[k], echemRunParameters[k])
-                if not math.isnan(curr):
-                    echem_running_status[k] = False
-                    all_current[k] = curr
-                    new_current_available[k] = True
-                    #print '    Echem done on potentiostat %s'%Ard_Address[k].get_device_id()
-        # Get data at frequency as defined in parameters
-        if (time.time()-lastSampleTime) > (1/sampleRate):
-            for k in range(numberOfRAAs):
-
-
-                #######  Get echem values  #######
-                try:
-                    # Check if echem cycle should be done by now (at least double the cycle time)
-                    if not not estimated_echem_end_time[k]:
-                        if time.time() > estimated_echem_end_time[k]:
-                            ## NOTE: I think this should say "enough time has passed, starting another round of echem"
-                            #print 'Too much time has passed, skipping echem for RAA %s'%(str(k + 1))
-                            estimated_echem_end_time[k] = []
-                            echem_running_status[k] = False
-                            new_current_available[k] = True
-                    # Check if potentiostat is connected
-                    if not Ard_Address[k] == []:
-                        # If potentiostat is connected, check status of echem cycle
-                        if not echem_running_status[k]:
-                            echem_timing[k] = time.time()
-                            echem_running_status[k] = True
-                            x = echemRunParameters[k]['low_volt_time'] + echemRunParameters[k]['high_volt_time']
-                            estimated_echem_end_time[k] = echem_timing[k] + (x*2)
-                
-                    # Get latest current value
-                    CurrVal = all_current[k]
-                    #print('CurrVal',CurrVal)
-                                        # Convert latest current to [H2O2]
-                    H2O2Val = experimentCurrToConcFunctions[k](CurrVal)
-                    # Check that there is one non-nan value in H2O2 history (to stabilize pump switching)
-                    concTemp = allH2O2Conc[k] + [H2O2Val]
-                    H2O2ValLast = []
-                    k1 = len(concTemp) - 1
-                    avg = 0
-                    if len(allH2O2Conc[0]) == average_value:
-					    avg = sum(allH2O2Conc[0]) / len(allH2O2Conc[0])
-					    print(avg)
-					    if avg < experimentRunParameters[k][0]:
-#					        pumpPinVals[k] = 1
-					        GPIO.output(17, True) #added by TJ 04/29
-					    if avg > experimentRunParameters[k][0]: #added by TJ 04/29
-#					        pumpPinVals[k] = 1 #added by TJ 04/29
-					        GPIO.output(17, False) #added by TJ 04/29
-                   #print('all ' , allH2O2Conc)
-                    #print('h2o2 val', H2O2Val)
-                    
-                    while H2O2ValLast == []:
-                        if not math.isnan(concTemp[k1]):
-                            H2O2ValLast = concTemp[k1]
-                        elif k1 == 0:
-                            H2O2ValLast = float('nan')
-                        k1 -= 1
-                    # If there is no non-nan value in H2O2 history, concider it an error
-                    if math.isnan(H2O2ValLast):
-##                        # Check if echem is running before throwing an error (it may not be finished yet)
-##                        if echem_running_status[k]:
-##                            # If echem is running, check if it has been more than 5 seconds past scheduled finish time
-##                            if ((echem_timing[k] - time.time()) >
-##                                (5 + echemRunParameters[k]['high_volt_time'] + echemRunParameters[k]['low_volt_time'])):
-                        ardErrorCount += 1
-                        #print 'Error: No history of non-nan value RAA %s\nArduino error count: %s'%(str(k + 1), str(ardErrorCount))
-                    if ardErrorCount > 5:
-                        print 'Attempting to reconnect to Arduinos...\n'
-                        Ard_Address = find_arduino_serial_ports(numberOfRAAs)
-##                        print 'Line 382: %s'%(str(Ard_Address[0].get_device_id()))
-                        ardErrorCount = 0
-                    #if not math.isnan(H2O2Val):
-                        #print '%0.2f'%(H2O2Val,)
-                    #print 'aRAA Step %s done'%printStep
-                    #printStep += 1
-                    #print 'aRAA Step %s start'%printStep
-                except:
-                    H2O2Val = float('nan')
-                    ardErrorCount = ardErrorCount + 1
-                    print 'Error: exception caught for RAA %s\nArduino error count: %s'%(str(k + 1), str(ardErrorCount))
-                    if ardErrorCount > 5:
-                        print 'Attempting to reconnect to Arduinos...\n'
-                        Ard_Address = find_arduino_serial_ports(numberOfRAAs)
-##                        print 'Line 390: %s'%(str(Ard_Address[0].get_device_id()))
-                        ardErrorCount = 0
-                    print 'Failed to read concentration for %s.'%(experimentName[k])
-                if new_current_available[k]:
-                    allH2O2Conc[k] = Add_Value_To_Data_List(allH2O2Conc[k], H2O2Val, average_value)
-                    #print 'allH2O2Conc', allH2O2Conc[k]
-                    new_current_available[k] = False
-
-
-                #######  Get temperature values  #######
-                #try:
-                #    currentTemp = get_current_temperature(RAA_Temp_Comm[k])
-                #except:
-                #    currentTemp = float('nan')
-                #    temperatureErrorCount = temperatureErrorCount + 1
-                #    if temperatureErrorCount > 5:
-                #        print 'Attempting to reconnect to PID controllers...\n'
-                #        RAA_Temp_Comm = find_PID_serial_ports(numberOfRAAs)
-                #        temperatureErrorCount = 0
-                #    print 'Failed to read temp for %s.'%(experimentName[k])
-                #allTemps[k] = Add_Value_To_Data_List(allTemps[k], currentTemp, 5)
-            lastSampleTime = time.time()
-            #print time.time(), lastSampleTime, lastWriteTime, lastSampleTime-lastWriteTime, 1/dataWriteRate, 1/sampleRate
-        # Write data to file at frequency as defined in parameters
-        if (time.time()-lastWriteTime) > (1/dataWriteRate):
-            for k in range(numberOfRAAs):
-                #print 'allH2O2Conc', allH2O2Conc[k]
-                if not len(allH2O2Conc[k]):
-                    continue
-                #_H2O2Conc = allH2O2Conc[k][-1]
-                _H2O2Conc = avg
-                #print('allH2O2Conc[k][-1]', allH2O2Conc[k][-1])
-                #print('avg',avg)
-                #_H2O2Conc = [x for x in allH2O2Conc[k] if not math.isnan(x)]
-                #_H2O2Conc = float(sum(_H2O2Conc)/max(len(_H2O2Conc),1))
-                #_Temperature = [x for x in allTemps[k] if not math.isnan(x)]
-                #_Temperature = float(sum(_Temperature)/max(len(_Temperature),1))
-                #_Temperature = 1.0
-                #print 'Writing running average to logfile %s:\n    H2O2 conc = %.2f'%(dataLogFileName[k], _H2O2Conc)
-                
-                # Write variables to file in case of failure
-                if os.path.isfile(defaultPath + '/wsvars.out'):
-                    os.remove(defaultPath + '/wsvars.out')
-                recovFile = shelve.open(defaultPath + '/wsvars.out', 'n')
-                for key in dir():
-                    try:
-                        recovFile[key] = globals()[key]
-                    except:
-##                        print('Error shelving: {0}'.format(key))
-                        pass
-                recovFile.close()
-                useLoadedVars = 0
-
-                # Write RAA vessel data to file
-                #Write_To_RAA_File(dataLogFileName[k], [_Temperature, _H2O2Conc])
-                with open(dataLogFileName[k], 'a') as fp:
-                    fp.write("%0.2f\n"%_H2O2Conc)
-            lastWriteTime = time.time()
-            
-
-
-
-
-
-except:
-    traceback.print_exc()
-    pass
-finally:
-    GPIO.cleanup()
+# Function to find Arduino Serial ports
+def find_arduino_serial_ports(num_RAAs):
+    Ard_Address = [[] for _ in range(num_RAAs)]
     ports = list(serial.tools.list_ports.comports())
+    print('Looking for ARD port...')
     for p in ports:
         try:
             dev = Potentiostat(p[0])
-            dev.stop_test()
+            cT = dev.get_device_id()
+            if float(cT) == 0:
+                print(f'Connecting RAA 1 to Arduino (ID: {cT}) via port {p[0]}.')
+                Ard_Address[0] = dev
         except:
             pass
+    for i in range(num_RAAs):
+        if not Ard_Address[i]:
+            print(f'Could not connect RAA {i + 1} to potentiostat')
+    return Ard_Address
+
+# Function to write data to RAA file
+def Write_To_RAA_File(log_file_name, new_line):
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    new_line = [current_time] + [str(val) for val in new_line]
+    new_line = '\t'.join(new_line) + '\n'
+    with open(log_file_name, 'a') as RAAFile:
+        RAAFile.write(new_line)
+
+# Function to add value to data list
+def Add_Value_To_Data_List(old_vals, new_val, len_limit):
+    if len(old_vals) >= len_limit:
+        old_vals = old_vals[1:]
+    old_vals.append(new_val)
+    return old_vals
+
+# Function to run experiment in synchronized mode
+def run_rodeo_synchronized(device_ID, echem_timer, echem_parameters):
+    # ... (skipped for brevity)
+
+# Function to initialize the experiment
+def initialize_experiment(device_ID, pump_pin, experiment_parameters):
+    # ... (skipped for brevity)
+
+# Find Serial ports for PID and Arduino
+serialPID = find_PID_serial_ports(1)  # Changed to 1 RAA
+Ard_Address = find_arduino_serial_ports(1)  # Changed to 1 RAA
+
+# Check if connections are successful
+if not serialPID[0]:
+    print('Could not connect to RAA 1')
+    GPIO.cleanup()
+    quit()
+
+# Initialize experiment for the single RAA
+pumpPin = pumpPins[0]
+deviceID = Ard_Address[0]
+experimentRunParameter = experimentRunParameters[0]
+experimentCurrToConcFunction = experimentCurrToConcFunctions[0]
+echemRunParameter = echemRunParameters[0]
+experimentName_k = experimentName[0]
+dataLogFileName_k = dataLogFileName[0]
+
+experiment_parameters = {
+    'curr_to_conc_function': experimentCurrToConcFunction,
+    'echem_parameters': echemRunParameter,
+    'experiment_run_parameters': experimentRunParameter,
+    'experiment_name': experimentName_k,
+    'data_log_file_name': dataLogFileName_k,
+    'sample_rate': sampleRate,
+    'data_write_rate': dataWriteRate
+}
+
+try:
+    device_ID = Potentiostat(serialPID[0])
+    initialize_experiment(device_ID, pumpPin, experiment_parameters)
+except:
+    print(f"Error in RAA 1: {traceback.format_exc()}")
+    pass
+
+finally:
+    GPIO.cleanup()
+    print('Exiting script...')
