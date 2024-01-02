@@ -1,0 +1,91 @@
+import pandas as pd
+import numpy as np
+from scipy.integrate import trapz
+
+# Function to calculate area under the peak within specified wavenumber range
+def calculate_area(wavenumbers, intensities, xi, xi1):
+    # Find the indices corresponding to the specified wavenumber range
+    idx = np.where((wavenumbers >= xi) & (wavenumbers <= xi1))[0]
+
+    # Create a linear baseline between xi and xi1
+    baseline = np.linspace(intensities[idx[0]], intensities[idx[-1]], len(idx))
+
+    # Adjust intensities in between xi and xi1 according to the baseline
+    adjusted_intensities = intensities.copy()
+    adjusted_intensities[idx] -= baseline
+
+    # Calculate area under the curve using the trapezoidal rule
+    area = trapz(adjusted_intensities[idx], wavenumbers[idx])
+
+    return area
+
+# Function to perform baseline correction for specified wavenumber range
+def baseline_correction(wavenumbers, intensities, xi, xi1):
+    # Find the indices corresponding to the specified wavenumber range
+    idx = np.where((wavenumbers >= xi) & (wavenumbers <= xi1))[0]
+
+    # Create a linear baseline between xi and xi1
+    baseline = np.linspace(intensities[idx[0]], intensities[idx[-1]], len(idx))
+
+    # Adjust intensities in between xi and xi1 according to the baseline
+    adjusted_intensities = intensities.copy()
+    adjusted_intensities[idx] -= baseline
+
+    return adjusted_intensities
+
+# Function to read data from a CSV file
+def read_data(filename):
+    data = pd.read_csv(filename, delimiter='\t')  # Assuming tab-delimited file, adjust as needed
+    return data['Wavenumber'], data['Intensity']
+
+# Main program
+if __name__ == "__main__":
+    # Ask the user to upload a CSV file
+    file_path = input("Please enter the path of the CSV file: ")
+    
+    # Read data from the CSV file
+    wavenumbers, intensities = read_data(file_path)
+
+    # Normalize intensities by dividing by the maximum intensity in the 1330-1394 region
+    normalization_region = (wavenumbers >= 1330) & (wavenumbers <= 1394)
+    max_intensity = np.max(intensities[normalization_region])
+    intensities /= max_intensity
+
+    # ASTM F2102 recommendations
+    print("ASTM F2102 Recommendations:")
+    print("For significantly oxidized UHMWPE samples: 1650-1850 cm⁻¹")
+    print("For samples with very small levels of oxidation: 1680-1765 cm⁻¹")
+
+    # Calculate the area under the curve for the 1330-1394 region (used for normalization)
+    normalization_area = calculate_area(wavenumbers, intensities, 1330, 1394)
+    print(f"Area under the curve for the 1330-1394 region: {normalization_area}")
+
+    # Baseline correction for 1330-1394 region
+    baseline_corrected_intensities_1330_1394 = baseline_correction(wavenumbers, intensities, 1330, 1394)
+
+    # Baseline correction for 1650-1850 region
+    baseline_corrected_intensities_1650_1850 = baseline_correction(wavenumbers, intensities, 1650, 1850)
+
+    # Baseline correction for 1680-1765 region
+    baseline_corrected_intensities_1680_1765 = baseline_correction(wavenumbers, intensities, 1680, 1765)
+
+    # Ask the user to define the wavenumber range (xi and xi+1)
+    xi = float(input("Enter the lower wavenumber (xi): "))
+    xi1 = float(input("Enter the upper wavenumber (xi+1): "))
+
+    # Calculate the area under the peak within the specified wavenumber range
+    area = calculate_area(wavenumbers, intensities, xi, xi1)
+
+    # Baseline correction for user-defined region
+    baseline_corrected_intensities_user_defined = baseline_correction(wavenumbers, intensities, xi, xi1)
+
+    # Calculate oxidation index values
+    oxidation_index_1 = area / normalization_area  # 1650-1850 region with 1330-1394 region
+    oxidation_index_2 = calculate_area(wavenumbers, baseline_corrected_intensities_1680_1765, 1680, 1765) / normalization_area  # 1680-1765 region with 1330-1394 region
+    oxidation_index_3 = calculate_area(wavenumbers, baseline_corrected_intensities_user_defined, xi, xi1) / normalization_area  # User defined region with 1330-1394 region
+
+    # Display the result
+    print(f"\nArea under the curve between {xi} and {xi1}: {area}")
+    print(f"Oxidation Index (1650-1850 cm⁻¹ with 1330-1394 cm⁻¹): {oxidation_index_1}")
+    print(f"Oxidation Index (1680-1765 cm⁻¹ with 1330-1394 cm⁻¹): {oxidation_index_2}")
+    print(f"Oxidation Index (User defined region with 1330-1394 cm⁻¹): {oxidation_index_3}")
