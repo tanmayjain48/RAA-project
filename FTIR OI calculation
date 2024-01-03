@@ -33,9 +33,9 @@ def baseline_correction(wavenumbers, intensities, xi, xi1):
 
     return adjusted_intensities
 
-# Function to read data from a CSV file
+# Function to read data from a CSV file with wavenumber values in Column A and intensity values in Column B
 def read_data(filename):
-    data = pd.read_csv(filename, delimiter='\t')  # Assuming tab-delimited file, adjust as needed
+    data = pd.read_csv(filename)
     return data['Wavenumber'], data['Intensity']
 
 # Main program
@@ -82,9 +82,9 @@ if __name__ == "__main__":
     # Calculate oxidation index values
     oxidation_index_1 = area / normalization_area  # 1650-1850 region with 1330-1394 region
     oxidation_index_2 = calculate_area(wavenumbers, baseline_corrected_intensities_1680_1765, 1680, 1765) / normalization_area  # 1680-1765 region with 1330-1394 region
-    oxidation_index_3 = calculate_area(wavenumbers, baseline_corrected_intensities_user_defined, xi, xi1) / normalization_area  # User defined region with 1330-1394 region
-
-    # Display the result
+    oxidation_index_3 = calculate_area(wavenumbers, baseline_corrected_intensities_user_defined, xi, xi1) / normalization_area 
+   
+   # Display the result
     print(f"\nArea under the curve between {xi} and {xi1}: {area}")
     print(f"Oxidation Index (1650-1850 cm⁻¹ with 1330-1394 cm⁻¹): {oxidation_index_1}")
     print(f"Oxidation Index (1680-1765 cm⁻¹ with 1330-1394 cm⁻¹): {oxidation_index_2}")
