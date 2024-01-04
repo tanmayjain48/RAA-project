@@ -97,7 +97,7 @@ if __name__ == "__main__":
     print(f"1765: Wavenumber={wavenumber_1765}, Intensity={intensity_1765}")
 
     # Calculate the area under the curve for the 1330-1394 region (used for normalization)
-    normalization_area = calculate_area(wavenumbers, intensities, 1330, 1394)
+    normalization_area = calculate_area(wavenumbers, baseline_correction(intensities, 1330, 1394))
     print(f"\nArea under the curve for the 1330-1394 region: {normalization_area}")
 
     # Baseline correction for 1330-1394 region
@@ -117,15 +117,15 @@ if __name__ == "__main__":
     xi1 = float(input("Enter the upper wavenumber (xi+1): "))
 
     # Calculate the area under the peak within the specified wavenumber range
-    area = calculate_area(wavenumbers, intensities, xi, xi1)
+    area = calculate_area(wavenumbers, baseline_corrected_intensities_1330_1394, xi, xi1)
 
     # Baseline correction for user-defined region
     baseline_corrected_intensities_user_defined = baseline_correction(wavenumbers, intensities, xi, xi1)
 
     # Calculate oxidation index values
-    oxidation_index_1 = area / normalization_area  # 1650-1850 region with 1330-1394 region
+    oxidation_index_1 = calculate_area(wavenumbers, baseline_corrected_intensities_1650_1850, 1650, 1850) / normalization_area  # 1650-1850 region with 1330-1394 region
     oxidation_index_2 = calculate_area(wavenumbers, baseline_corrected_intensities_1680_1765, 1680, 1765) / normalization_area  # 1680-1765 region with 1330-1394 region
-    oxidation_index_3 = calculate_area(wavenumbers, baseline_corrected_intensities_user_defined, xi, xi1) / normalization_area 
+    oxidation_index_3 = area / normalization_area  # User defined region with 1330-1394 region
    
    # Display the result
     print(f"\nArea under the curve between {xi} and {xi1}: {area}")
